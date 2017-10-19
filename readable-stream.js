@@ -1,8 +1,8 @@
 //------------------------------------------------------------------
 // Dependencies
 
-var Stream = require('stream')
-  , util   = require('util');
+var Stream = require('stream');
+var util = require('util');
 
 //------------------------------------------------------------------
 // ReadableStream class
@@ -32,4 +32,4 @@ ReadableStream.prototype.end = function() {
 //------------------------------------------------------------------
 // Exports
 
-module.exports = ReadableStream
+module.exports = ReadableStream;

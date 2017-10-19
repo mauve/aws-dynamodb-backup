@@ -1,30 +1,27 @@
-# DyanmoDB Backup
+# DynamoDB Backup
 
-### 0. Update bucket for storing backups
-
-On or about line 23 you fill need to update your code with the name of the s3 bucket you whish to store your backups in.
+### Building distributable package for upload to lambda
 
 ```
-Bucket: 'ccu-dynamo-backups'
+$ npm run build
 ```
 
-### 1. Create zip to upload
-
-1. grunt lambda_package
-2. Zip will be created under the dist folder
-
-### 2. Create a lambda function
+### Create a lambda function
 
 1. Within lambda, press the 'Create a Lambda Function' button
-2. Press the 'Skip' button to bypass the suggested blueprints
-3. Enter the lambda function name DyanmoBackup
-4. Select 'Node.js' as the Runtime
-5. Upload the zip 
-6. Under 'Handler' add 'Index.handler'
+1. Press the 'Skip' button to bypass the suggested blueprints
+1. Enter the lambda function name dynamodb-backup
+1. Select 'Node.js' as the Runtime
+1. Upload the zip
+1. Under 'Handler' add 'Index.handler'
+1. Add two environment variables:
+   1. BUCKET_NAME which is the bucket to publish to
+   1. (optional) CAPACITY_FACTOR a float less than 0.9 which controls how much
+      of the provisioned read capacity to consume
 
 More [documentation on Lambda](https://docs.aws.amazon.com/lambda/latest/dg/getting-started.html)
 
-### 3. Configure the access policy for your lambda role
+### Configure the access policy for your lambda role
 
 Your lambda function will run as an IAM role.  This is where we configure the permissions required.
 
@@ -74,33 +71,18 @@ This contains permissions for:
 2. Stroring zipped dynamo backups from dynamo to S3.
 3. List dynamo tables and get dynamo data
 
-### Using Grunt
-
-You can use grunt to invoke, pacakge and deploy the lambda function.  To test the function from the command line run:
-
-```
-grunt lambda_invoke
-```
-
-Once the lambda function has been created update Gruntfile.js with the arn of the function.  Once Gruntfile.js is up to 
-date you can can simply deploy the function with:
-
-```
-grunt deploy
-```
-
 ### Restore example
 
 There is an example restore function in restore.js.  Example usage
 
 ```
-./restore.js -b ccu-dynamo-backups -s alarms -t alarms1
+./restore.js -b table-backups -s instances -t stages
 ```
 
 The usage is:
 
 ```
-[dynamodb-backup (master)]$ ./restore.js -h
+[aws-dynamodb-backup (master)]$ ./restore.js -h
 
   Usage: restore [options]
 

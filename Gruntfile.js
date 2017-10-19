@@ -8,7 +8,6 @@ grunt.initConfig({
     },
     lambda_deploy: {
         default: {
-          arn: 'arn:aws:lambda:us-east-1:078742956215:function:DynamoBackup'
         }
     },
     lambda_package: {

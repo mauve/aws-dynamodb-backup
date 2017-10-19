@@ -1,28 +1,29 @@
 {
-  "name": "dynamodb-backup",
+  "name": "aws-dynamodb-backup",
   "version": "1.0.0",
-  "description": "Can be used to backup dynamo tables to s3",
+  "description": "Backs up dynamodb tables to S3",
   "main": "index.js",
   "dependencies": {
     "async": "^1.5.0",
     "aws-sdk": "^2.2.23",
     "commander": "^2.9.0",
-    "dateformat": "^1.0.12",
+    "dateformat": "^1.0.12"
+  },
+  "devDependencies": {
     "grunt": "^0.4.5",
     "grunt-aws-lambda": "^0.11.0"
   },
-  "devDependencies": {},
   "scripts": {
+    "build": "grunt lambda_package",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sbower/dynamodb-backup.git"
+    "url": "git+https://github.com/mauve/aws-dynamodb-backup.git"
   },
-  "author": "Shawn Bower",
-  "license": "ISC",
+  "author": "Mikael Olenfalk",
   "bugs": {
-    "url": "https://github.com/sbower/dynamodb-backup/issues"
+    "url": "https://github.com/mauve/aws-dynamodb-backup/issues"
   },
-  "homepage": "https://github.com/sbower/dynamodb-backup#readme"
+  "homepage": "https://github.com/mauve/aws-dynamodb-backup#readme"
 }

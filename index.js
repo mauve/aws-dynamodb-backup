@@ -1,16 +1,45 @@
 var backup = require('./backup');
 
-exports.handler = function (event, context) {
-    var bucketName = process.env.BUCKET_NAME;
-    var capacityFactor = Number.parseFloat(process.env.CAPACITY_FACTOR);
+exports.handler = function (event, context, callback) {
+    var BucketName = process.env.BUCKET_NAME;
+    var CapacityFactor = Number.parseFloat(process.env.CAPACITY_FACTOR);
+    var TableName = process.env.TABLE_NAME;
 
-    if (Number.isNaN(capacityFactory) || capacityFactor > 0.9) {
-        capacityFactor = 0.9;
+    if (Number.isNaN(CapacityFactory) || CapacityFactor > 0.9) {
+        CapacityFactor = 0.9;
     }
 
-    if (!bucketName) {
-        console.log("ERROR missing environment variable BUCKET_NAME");
+    if (!BucketName) {
+        callback("ERROR missing environment variable BUCKET_NAME");
+        return;
     }
 
-    backup.backupAll(context, bucketName, capacityFactor);
+    if (!TableName) {
+        callback("ERROR missing environment variable TABLE_NAME");
+        return;
+    }
+
+    var options = {
+        BucketName: BucketName,
+        TableName: TableName,
+        BackupId: event.BackupId,
+        SequenceId: event.SequenceId,
+        CapacityFactor: CapacityFactor
+    };
+    console.log("INFO: starting backup of ${TableName}", options);
+    backup.backupTable(options).then((result) => {
+        if (err) {
+            console.log("ERROR: failed to backup ${TableName}", options);
+            callback(err);
+        } else {
+            console.log(`INFO: backup of ${TableName} ${result.BackupId} ${result.SequenceId} finished.`);
+
+            if (result.done) {
+                console.log(`INFO: backup of ${TableName} ${result.BackupId} completed.`);
+            } else {
+                console.log(`INFO: Scheduled continuation with sequence ${result.SequenceId + 1}`);
+            }
+            callback();
+        }
+    });
 };

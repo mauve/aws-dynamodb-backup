@@ -5,81 +5,129 @@ var zlib = require('zlib');
 var async = require('async');
 
 var dateFormat = require('dateformat');
-var ts = dateFormat(new Date(), "mmddyyyy-HHMMss");
 
 dynamo = new aws.DynamoDB();
+lambda = new aws.Lambda();
 
-function backupTable(tablename, bucketName, capacityFactor, callback) {
-  var data_stream = new ReadableStream();//new stream.Readable();
-  var gzip = zlib.createGzip();
-
-  // create parameters hash for table scan
-  var params = {TableName: tablename, ReturnConsumedCapacity: 'NONE', Limit: '1'};
-
-  // body will contain the compressed content to ship to s3
-  var body = data_stream.pipe(gzip);
-
-  var s3obj = new aws.S3({params: {Bucket: bucketName, Key: tablename + '/' + tablename + '-' + ts + '.gz'}});
-  s3obj.upload({Body: body}).
-    on('httpUploadProgress', function(evt) {
-      console.log(evt);
-    }).
-    send(function(err, data) { console.log(err, data); callback(); });
-
-  function onScan(err, data) {
-    if (err) console.log(err, err.stack);
-    else {
-      for (var idx = 0; idx < data.Items.length; idx++) {
-        data_stream.append(JSON.stringify(data.Items[idx]));
-        data_stream.append("\n");
-      }
+function __scanTable(params, process) {
+  function onScan(data) {
+    Promise.resolve(process(data)).then((timeoutReached) => {
+      if (timeoutReached)
+        return;
 
       if (typeof data.LastEvaluatedKey != "undefined") {
+        // continue scanning
         params.ExclusiveStartKey = data.LastEvaluatedKey;
-        dynamo.scan(params, onScan);
+
+        data = null;
+        return dynamo.scan(params).promise().then((result) => {
+          onScan(result);
+        });
       }
-      else {
-        data_stream.end();
-      }
-    }
+    });
   }
 
-  // describe the table and write metadata to the backup
-  dynamo.describeTable({TableName: tablename}, function(err, data) {
-    if (err) console.log(err, err.stack);
-    else {
-      table = data.Table;
-      // Write table metadata to first line
-      data_stream.append(JSON.stringify(table));
+  // start scanning table
+  return dynamo.scan(params).promise().then((data) => onScan(data));
+}
+
+function __rescheduleLambda(LastEvaluatedKey, options, context) {
+  var payload = {
+    ExclusiveStartKey: LastEvaluatedKey,
+    BackupId: options.BackupId,
+    SequenceId: options.SequenceId + 1
+  };
+
+  return lambda.invoke({
+    FunctionName: context.invokedFunctionArn,
+    Payload: JSON.stringify(payload),
+    InvocationType: 'EVENT'
+  }).promise().catch((err) => {
+    console.log(`ERROR could not trigger continuation: ${payload} for ${context.invokedFunctionArn}`, err);
+    throw(err);
+  });
+}
+
+function __processTable(table, timeoutReached, rescheduleLambda) {
+  // first write metadata as header
+  var header = {
+    Table: table,
+    backupId: options.BackupId,
+    sequenceId: options.SequenceId
+  };
+  data_stream.append(JSON.stringify(header));
+  data_stream.append("\n");
+
+  return __scanTable({
+    TableName: table.TableName,
+    ReturnConsumedCapacity: 'NONE',
+    Limit: table.ProvisionedThroughput.ReadCapacityUnits * capacityFactor,
+  },
+  (data) => {
+    for (var idx = 0; idx < data.Items.length; idx++) {
+      data_stream.append(JSON.stringify(data.Items[idx]));
       data_stream.append("\n");
+    }
 
-      // limit the the number or reads to match our capacity
-      params.Limit = table.ProvisionedThroughput.ReadCapacityUnits * capacityFactor;
+    if (timeoutReached()) {
+      return rescheduleLambda(data.LastEvaluatedKey).then(() => false);
+    } else {
+      return true;
+    }
+  });
+}
 
-      // start streaminf table data
-      dynamo.scan(params, onScan);
+function backupTable(options, context, callback) {
+  var data_stream = new ReadableStream();
+  var gzip = zlib.createGzip();
+
+  options.BackupId = options.BackupId || dateFormat(new Date(), "mmddyyyy-HHMMss");
+  options.SequenceId = options.SequenceId || 0;
+
+  var key = `${options.TableName}/${options.BackupId}/${options.SequenceId}.gz`;
+
+  var s3obj = new aws.S3({
+    params: {
+      Bucket: options.BucketName,
+      Key: key
     }
   });
 
-}
+  var uploadPromise = s3obj.upload({
+      Body: data_stream.pipe(gzip)
+    }).on('httpUploadProgress', (evt) => {
+      console.log("INFO: HTTP upload progress", evt);
+    }).promise().then((data) => {
+      console.log(`INFO: S3 upload of backup to ${data.Bucket} ${data.Key} succeeded.`);
+      console.log(`INFO: Backup is available at: ${data.Location} (E-tag: ${data.ETag})`);
+      return data;
+    }).catch((err) => {
+      console.log(`ERROR: S3 upload of ${key} (${options.BucketName}) failed:`, err);
+      throw(err);
+    });
 
-function backupAll(context, bucketName, capacityFactor) {
-  dynamo.listTables({}, function(err, data) {
-    if (err) console.log(err, err.stack); // an error occurred
-    else {
-      async.each(data.TableNames, function(table, callback) {
-        console.log('Backing up ' + table);
-        backupTable(table, bucketName, capacityFactor, callback);
-      }, function(err){
-        if( err ) {
-          console.log('A table failed to process');
-        } else {
-          console.log('All tables have been processed successfully');
-        }
-        context.done(err);
+  var backupPromise = dynamo.describeTable({
+    TableName: options.TableName
+  }).promise().then((data) => {
+    return __processTable(data.Table,
+      () => context.getRemainingTimeInMillis() < 30000,
+      (LastEvaluatedKey) => {
+        return __rescheduleLambda(LastEvaluatedKey, options, context);
       });
-    }
+  }).then(() => {
+    data_stream.end();
+  }).catch((err) => {
+    console.log(`ERROR: describe of table ${options.TableName} failed ${err}: ${data}`);
+    data_stream.end();
+    throw(err);
+  });
+
+  return Promise.all(uploadPromise, backupPromise).then((results) => {
+    return {
+      BackupId: options.BackupId,
+      SequenceId: options.SequenceId
+    };
   });
 }
 
-module.exports.backupAll = backupAll;
+module.exports.backupTable = backupTable;

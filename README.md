@@ -15,6 +15,7 @@ $ npm run build
 1. Upload the zip
 1. Under 'Handler' add 'Index.handler'
 1. Add two environment variables:
+   1. TABLE_NAME which is the table to backup
    1. BUCKET_NAME which is the bucket to publish to
    1. (optional) CAPACITY_FACTOR a float less than 0.9 which controls how much
       of the provisioned read capacity to consume
@@ -52,13 +53,12 @@ Your lambda function will run as an IAM role.  This is where we configure the pe
         {
             "Effect": "Allow",
             "Action": [
-                "dynamodb:ListTables",
                 "dynamodb:DescribeTable",
                 "dynamodb:Query",
                 "dynamodb:Scan"
             ],
             "Resource": [
-                "*"
+                "${TABLE_NAME}"
             ]
         }
     ]

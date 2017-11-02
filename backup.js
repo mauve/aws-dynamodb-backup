@@ -12,8 +12,10 @@ lambda = new aws.Lambda();
 function __scanTable(params, process) {
   function onScan(data) {
     Promise.resolve(process(data)).then((timeoutReached) => {
-      if (timeoutReached)
-        return;
+      if (timeoutReached) {
+        console.log("INFO: timeout reached, aborting scanning");
+        return false;
+      }
 
       if (typeof data.LastEvaluatedKey != "undefined") {
         // continue scanning
@@ -24,6 +26,8 @@ function __scanTable(params, process) {
           onScan(result);
         });
       }
+
+      return true;
     });
   }
 
@@ -38,17 +42,18 @@ function __rescheduleLambda(LastEvaluatedKey, options, context) {
     SequenceId: options.SequenceId + 1
   };
 
+  console.log("INFO: scheduling next lambda:", payload);
   return lambda.invoke({
     FunctionName: context.invokedFunctionArn,
     Payload: JSON.stringify(payload),
     InvocationType: 'EVENT'
   }).promise().catch((err) => {
-    console.log(`ERROR could not trigger continuation: ${payload} for ${context.invokedFunctionArn}`, err);
+    console.log(`ERROR: could not trigger continuation: ${payload} for ${context.invokedFunctionArn}`, err);
     throw(err);
   });
 }
 
-function __processTable(table, timeoutReached, rescheduleLambda) {
+function __processTable(table, timeoutReached, rescheduleLambda, options, data_stream) {
   // first write metadata as header
   var header = {
     Table: table,
@@ -58,30 +63,35 @@ function __processTable(table, timeoutReached, rescheduleLambda) {
   data_stream.append(JSON.stringify(header));
   data_stream.append("\n");
 
+  var count = 0;
   return __scanTable({
     TableName: table.TableName,
     ReturnConsumedCapacity: 'NONE',
-    Limit: table.ProvisionedThroughput.ReadCapacityUnits * capacityFactor,
+    Limit: table.ProvisionedThroughput.ReadCapacityUnits * options.CapacityFactor,
   },
   (data) => {
+    console.log(`INFO: processing ${data.Items.length} items, current total ${count}.`);
+    count += data.Items.length;
+
     for (var idx = 0; idx < data.Items.length; idx++) {
       data_stream.append(JSON.stringify(data.Items[idx]));
       data_stream.append("\n");
     }
 
     if (timeoutReached()) {
-      return rescheduleLambda(data.LastEvaluatedKey).then(() => false);
+      console.log(`INFO: timeout reached, rescheduling with token: ${data.LastEvaluatedKey}.`);
+      return rescheduleLambda(data.LastEvaluatedKey).then(() => true);
     } else {
-      return true;
+      return false;
     }
   });
 }
 
-function backupTable(options, context, callback) {
+function backupTable(options, context) {
   var data_stream = new ReadableStream();
   var gzip = zlib.createGzip();
 
-  options.BackupId = options.BackupId || dateFormat(new Date(), "mmddyyyy-HHMMss");
+  options.BackupId = options.BackupId || dateFormat(new Date(), "yyyymmdd-HHMMss");
   options.SequenceId = options.SequenceId || 0;
 
   var key = `${options.TableName}/${options.BackupId}/${options.SequenceId}.gz`;
@@ -110,22 +120,30 @@ function backupTable(options, context, callback) {
     TableName: options.TableName
   }).promise().then((data) => {
     return __processTable(data.Table,
-      () => context.getRemainingTimeInMillis() < 30000,
+      () => {
+        // console.log(`INFO: remaining time: ${context.getRemainingTimeInMillis()}ms`);
+        return context.getRemainingTimeInMillis() < 30000;
+      },
       (LastEvaluatedKey) => {
         return __rescheduleLambda(LastEvaluatedKey, options, context);
-      });
-  }).then(() => {
+      },
+      options,
+      data_stream);
+  }).then((table_done) => {
     data_stream.end();
+    return table_done;
   }).catch((err) => {
-    console.log(`ERROR: describe of table ${options.TableName} failed ${err}: ${data}`);
+    console.log(`ERROR: describe of table ${options.TableName} failed ${err}`);
     data_stream.end();
     throw(err);
   });
 
-  return Promise.all(uploadPromise, backupPromise).then((results) => {
+  return Promise.all([uploadPromise, backupPromise]).then((results) => {
+    console.log(`INFO: backupTable finished waiting: ${results}`);
     return {
       BackupId: options.BackupId,
-      SequenceId: options.SequenceId
+      SequenceId: options.SequenceId,
+      done: results[1]
     };
   });
 }

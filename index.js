@@ -5,7 +5,7 @@ exports.handler = function (event, context, callback) {
     var CapacityFactor = Number.parseFloat(process.env.CAPACITY_FACTOR);
     var TableName = process.env.TABLE_NAME;
 
-    if (Number.isNaN(CapacityFactory) || CapacityFactor > 0.9) {
+    if (Number.isNaN(CapacityFactor) || CapacityFactor > 0.9) {
         CapacityFactor = 0.9;
     }
 
@@ -26,20 +26,18 @@ exports.handler = function (event, context, callback) {
         SequenceId: event.SequenceId,
         CapacityFactor: CapacityFactor
     };
-    console.log("INFO: starting backup of ${TableName}", options);
-    backup.backupTable(options).then((result) => {
-        if (err) {
-            console.log("ERROR: failed to backup ${TableName}", options);
-            callback(err);
-        } else {
-            console.log(`INFO: backup of ${TableName} ${result.BackupId} ${result.SequenceId} finished.`);
+    console.log(`INFO: starting backup of ${TableName}`, options);
+    backup.backupTable(options, context).then((result) => {
+        console.log(`INFO: backup of ${TableName} ${result.BackupId} ${result.SequenceId} finished.`);
 
-            if (result.done) {
-                console.log(`INFO: backup of ${TableName} ${result.BackupId} completed.`);
-            } else {
-                console.log(`INFO: Scheduled continuation with sequence ${result.SequenceId + 1}`);
-            }
-            callback();
+        if (result.done) {
+            console.log(`INFO: backup of ${TableName} ${result.BackupId} completed.`);
+        } else {
+            console.log(`INFO: Scheduled continuation with sequence ${result.SequenceId + 1}`);
         }
+        callback();
+    }).catch((err) => {
+        console.log(`ERROR: failed to backup ${TableName}`, options);
+        callback(err);
     });
 };
